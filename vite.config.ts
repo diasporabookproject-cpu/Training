@@ -3,7 +3,12 @@ import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { fileURLToPath, URL } from "node:url";
 
+// On GitHub Pages the app is served from https://<owner>.github.io/Training/,
+// so production assets need the "/Training/" base. Dev stays at "/".
+const BASE = process.env.GITHUB_PAGES ? "/Training/" : "/";
+
 export default defineConfig({
+  base: BASE,
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },
@@ -20,7 +25,9 @@ export default defineConfig({
         background_color: "#0b0f17",
         display: "standalone",
         orientation: "portrait",
-        start_url: "/",
+        // Relative so it works under any base (root in dev, /Training/ on Pages).
+        start_url: ".",
+        scope: BASE,
         icons: [
           { src: "icon-192.png", sizes: "192x192", type: "image/png" },
           { src: "icon-512.png", sizes: "512x512", type: "image/png" },
