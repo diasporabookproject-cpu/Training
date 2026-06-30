@@ -135,11 +135,13 @@ export function SeanceTab() {
 
   async function handleSave() {
     if (!canSave) return;
+    const now = Date.now();
     const workout: Workout = {
       id: newId("wk"),
       date,
       entries: validEntries,
-      createdAt: Date.now(),
+      createdAt: now,
+      updatedAt: now,
     };
     try {
       await saveWorkout(workout);

@@ -29,6 +29,30 @@ class ChargeDB extends Dexie {
       // Holds the autosaved draft and misc app settings.
       settings: "key",
     });
+    // v2 adds cloud-sync bookkeeping: updatedAt + soft-delete tombstones.
+    this.version(2)
+      .stores({
+        exercises: "id, name, primaryMuscle, source, updatedAt, deleted",
+        workouts: "id, date, createdAt, updatedAt, deleted",
+        settings: "key",
+      })
+      .upgrade(async (tx) => {
+        const now = Date.now();
+        await tx
+          .table("exercises")
+          .toCollection()
+          .modify((e: Exercise) => {
+            if (e.updatedAt == null) e.updatedAt = e.createdAt ?? now;
+            if (e.deleted == null) e.deleted = false;
+          });
+        await tx
+          .table("workouts")
+          .toCollection()
+          .modify((w: Workout) => {
+            if (w.updatedAt == null) w.updatedAt = w.createdAt ?? now;
+            if (w.deleted == null) w.deleted = false;
+          });
+      });
   }
 }
 
@@ -81,8 +105,11 @@ export async function storageEstimate(): Promise<StorageEstimate | null> {
 
 // ── Exercises (adopted) ───────────────────────────────────────────────────
 
+/** Adopted exercises, excluding soft-deleted tombstones. */
 export function getExercises(): Promise<Exercise[]> {
-  return guard("lire les exercices", () => db.exercises.toArray());
+  return guard("lire les exercices", async () =>
+    (await db.exercises.toArray()).filter((e) => !e.deleted)
+  );
 }
 
 export function getExercise(id: string): Promise<Exercise | undefined> {
@@ -93,7 +120,11 @@ export async function findAdoptedByLibraryId(
   libraryId: string
 ): Promise<Exercise | undefined> {
   return guard("rechercher un exercice adopté", () =>
-    db.exercises.where("source").equals("library").and((e) => e.libraryId === libraryId).first()
+    db.exercises
+      .where("source")
+      .equals("library")
+      .and((e) => e.libraryId === libraryId && !e.deleted)
+      .first()
   );
 }
 
@@ -101,30 +132,40 @@ export function putExercise(ex: Exercise): Promise<string> {
   return guard("enregistrer un exercice", () => db.exercises.put(ex));
 }
 
-export function deleteExercise(id: string): Promise<void> {
-  return guard("supprimer un exercice", () => db.exercises.delete(id));
+/** Soft-delete: keep a tombstone with a fresh updatedAt so the deletion syncs. */
+export async function deleteExercise(id: string): Promise<void> {
+  await guard("supprimer un exercice", () =>
+    db.exercises.update(id, { deleted: true, updatedAt: Date.now() })
+  );
 }
 
 export async function updateExercise(
   id: string,
   patch: Partial<Pick<Exercise, "name" | "primaryMuscle">>
 ): Promise<void> {
-  await guard("modifier un exercice", () => db.exercises.update(id, patch));
+  await guard("modifier un exercice", () =>
+    db.exercises.update(id, { ...patch, updatedAt: Date.now() })
+  );
 }
 
 // ── Workouts ────────────────────────────────────────────────────────────────
 
 export async function getWorkouts(): Promise<Workout[]> {
   const list = await guard("lire les séances", () => db.workouts.toArray());
-  return list.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt - a.createdAt));
+  return list
+    .filter((w) => !w.deleted)
+    .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : b.createdAt - a.createdAt));
 }
 
 export function putWorkout(w: Workout): Promise<string> {
   return guard("enregistrer la séance", () => db.workouts.put(w));
 }
 
-export function deleteWorkout(id: string): Promise<void> {
-  return guard("supprimer la séance", () => db.workouts.delete(id));
+/** Soft-delete: keep a tombstone with a fresh updatedAt so the deletion syncs. */
+export async function deleteWorkout(id: string): Promise<void> {
+  await guard("supprimer la séance", () =>
+    db.workouts.update(id, { deleted: true, updatedAt: Date.now() })
+  );
 }
 
 /** Latest non-empty sets logged for an exercise, for prefill. */
@@ -203,13 +244,25 @@ export function isValidBackup(data: unknown): data is BackupV1 {
 
 /** Replace ALL data with the backup contents (used by Import). */
 export async function importBackup(backup: BackupV1): Promise<void> {
+  const now = Date.now();
+  // Backfill sync fields for backups exported before cloud sync existed.
+  const exercises = backup.exercises.map((e) => ({
+    ...e,
+    updatedAt: e.updatedAt ?? e.createdAt ?? now,
+    deleted: e.deleted ?? false,
+  }));
+  const workouts = backup.workouts.map((w) => ({
+    ...w,
+    updatedAt: w.updatedAt ?? w.createdAt ?? now,
+    deleted: w.deleted ?? false,
+  }));
   await guard("importer la sauvegarde", () =>
     db.transaction("rw", db.exercises, db.workouts, db.settings, async () => {
       await db.exercises.clear();
       await db.workouts.clear();
       await db.settings.delete(DRAFT_KEY);
-      await db.exercises.bulkPut(backup.exercises);
-      await db.workouts.bulkPut(backup.workouts);
+      await db.exercises.bulkPut(exercises);
+      await db.workouts.bulkPut(workouts);
     })
   );
 }
@@ -222,6 +275,43 @@ export async function resetAll(): Promise<void> {
       await db.settings.clear();
     })
   );
+}
+
+// ── Cloud sync helpers ────────────────────────────────────────────────────
+// These return/accept RAW rows INCLUDING soft-deleted tombstones, so deletions
+// propagate across devices. Used only by the sync engine.
+
+export function getAllExercisesRaw(): Promise<Exercise[]> {
+  return guard("lire les exercices (sync)", () => db.exercises.toArray());
+}
+
+export function getAllWorkoutsRaw(): Promise<Workout[]> {
+  return guard("lire les séances (sync)", () => db.workouts.toArray());
+}
+
+/** Upsert rows coming from the cloud (already decided to win by updatedAt). */
+export async function applyRemote(
+  exercises: Exercise[],
+  workouts: Workout[]
+): Promise<void> {
+  if (exercises.length === 0 && workouts.length === 0) return;
+  await guard("appliquer la synchro", () =>
+    db.transaction("rw", db.exercises, db.workouts, async () => {
+      if (exercises.length) await db.exercises.bulkPut(exercises);
+      if (workouts.length) await db.workouts.bulkPut(workouts);
+    })
+  );
+}
+
+const LAST_SYNC_KEY = "lastSyncAt";
+
+export async function getLastSyncAt(): Promise<number | null> {
+  const row = await db.settings.get(LAST_SYNC_KEY).catch(() => undefined);
+  return (row?.value as number) ?? null;
+}
+
+export async function setLastSyncAt(ts: number): Promise<void> {
+  await db.settings.put({ key: LAST_SYNC_KEY, value: ts }).catch(() => {});
 }
 
 export type { MuscleGroup };

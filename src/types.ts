@@ -61,6 +61,8 @@ export type Exercise = {
   mechanic: string | null;
   force: string | null;
   createdAt: number;
+  updatedAt: number; // for last-write-wins cloud sync
+  deleted?: boolean; // soft-delete tombstone so deletions propagate
 };
 
 export type WorkoutSet = { weight: number; reps: number }; // kg
@@ -71,6 +73,8 @@ export type Workout = {
   date: string; // 'YYYY-MM-DD'
   entries: WorkoutEntry[];
   createdAt: number;
+  updatedAt: number; // for last-write-wins cloud sync
+  deleted?: boolean; // soft-delete tombstone so deletions propagate
 };
 
 /** In-progress session, autosaved. */

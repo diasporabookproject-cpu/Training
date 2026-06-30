@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Check,
+  Cloud,
+  CloudOff,
   Database,
   Download,
   FileJson,
   FileSpreadsheet,
+  LogOut,
   Pencil,
   Plus,
+  RefreshCw,
   RotateCcw,
   Trash2,
   Upload,
@@ -120,6 +124,8 @@ export function ReglagesTab() {
         </Card>
       )}
 
+      <CloudSyncSection />
+
       <ExerciseManager />
 
       <section className="space-y-2">
@@ -219,6 +225,179 @@ export function ReglagesTab() {
         }}
       />
     </div>
+  );
+}
+
+function relativeTime(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return "à l'instant";
+  const m = Math.floor(s / 60);
+  if (m < 60) return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h} h`;
+  const d = Math.floor(h / 24);
+  return `il y a ${d} j`;
+}
+
+function CloudSyncSection() {
+  const {
+    syncEnabled,
+    userEmail,
+    syncStatus,
+    syncError,
+    lastSyncAt,
+    signIn,
+    signUp,
+    signOut,
+    syncNow,
+  } = useStore();
+  const toast = useToast();
+
+  const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  if (!syncEnabled) return null;
+
+  const signedIn = userEmail !== null;
+
+  async function handleSubmit() {
+    if (busy) return;
+    const e = email.trim();
+    if (!e || password.length < 6) {
+      toast("Email valide et mot de passe d'au moins 6 caractères.", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      if (mode === "signup") {
+        const { needsConfirmation } = await signUp(e, password);
+        if (needsConfirmation) {
+          toast("Compte créé. Confirme ton email puis connecte-toi.", "success");
+          setMode("signin");
+        } else {
+          toast("Compte créé et connecté ✓", "success");
+        }
+      } else {
+        await signIn(e, password);
+        toast("Connecté ✓", "success");
+      }
+      setPassword("");
+    } catch (err) {
+      toast(err instanceof Error ? err.message : "Échec de la connexion", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const statusLine = (() => {
+    switch (syncStatus) {
+      case "syncing":
+        return "Synchronisation…";
+      case "error":
+        return syncError ?? "Erreur de synchronisation";
+      case "offline":
+        return "Hors-ligne — synchro en attente";
+      case "idle":
+        return lastSyncAt ? `Synchronisé ${relativeTime(lastSyncAt)}` : "Prêt à synchroniser";
+      default:
+        return "";
+    }
+  })();
+
+  return (
+    <section className="space-y-2">
+      <SectionTitle>Synchronisation cloud</SectionTitle>
+      <Card className="p-4">
+        {signedIn ? (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <Cloud
+                size={22}
+                className={
+                  syncStatus === "error"
+                    ? "text-down"
+                    : syncStatus === "offline"
+                      ? "text-muted"
+                      : "text-up"
+                }
+              />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[15px] font-medium">{userEmail}</p>
+                <p
+                  className={`text-xs ${
+                    syncStatus === "error" ? "text-down" : "text-muted"
+                  }`}
+                >
+                  {statusLine}
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="primary"
+                size="sm"
+                className="flex-1"
+                disabled={syncStatus === "syncing"}
+                onClick={() => void syncNow()}
+              >
+                <RefreshCw
+                  size={15}
+                  className={syncStatus === "syncing" ? "animate-spin" : ""}
+                />
+                Synchroniser
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => void signOut()}>
+                <LogOut size={15} /> Déconnexion
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <div className="flex items-center gap-3">
+              <CloudOff size={22} className="text-muted" />
+              <p className="text-sm text-muted">
+                Connecte-toi pour synchroniser tes séances entre tes appareils.
+              </p>
+            </div>
+            <input
+              type="email"
+              inputMode="email"
+              autoComplete="email"
+              value={email}
+              onChange={(ev) => setEmail(ev.target.value)}
+              placeholder="Email"
+              className="h-12 w-full rounded-xl border border-line bg-panel-2 px-3 text-[15px] text-ink placeholder:text-muted"
+            />
+            <input
+              type="password"
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              value={password}
+              onChange={(ev) => setPassword(ev.target.value)}
+              placeholder="Mot de passe (6 caractères min.)"
+              className="h-12 w-full rounded-xl border border-line bg-panel-2 px-3 text-[15px] text-ink placeholder:text-muted"
+            />
+            <Button
+              variant="primary"
+              className="w-full"
+              disabled={busy}
+              onClick={handleSubmit}
+            >
+              {mode === "signup" ? "Créer un compte" : "Se connecter"}
+            </Button>
+            <button
+              className="w-full text-center text-xs text-muted underline"
+              onClick={() => setMode(mode === "signup" ? "signin" : "signup")}
+            >
+              {mode === "signup"
+                ? "J'ai déjà un compte → me connecter"
+                : "Pas de compte ? → en créer un"}
+            </button>
+          </div>
+        )}
+      </Card>
+    </section>
   );
 }
 
