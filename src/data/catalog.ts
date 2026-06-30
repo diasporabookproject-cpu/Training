@@ -5,6 +5,10 @@
 
 import type { CatalogExercise, MuscleGroup } from "@/types";
 import { MUSCLE_GROUPS } from "@/types";
+import { nameMatches, normalize, scoreMatch, tokenizeQuery } from "./search-fr";
+
+// Re-export so existing importers keep working.
+export { normalize };
 
 type RawExercise = {
   id: string;
@@ -20,15 +24,6 @@ type RawExercise = {
 };
 
 const MUSCLE_SET = new Set<string>(MUSCLE_GROUPS);
-
-/** Normalize for accent/case-insensitive search. */
-export function normalize(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .trim();
-}
 
 function mapEquipment(eq: string | null): string | null {
   if (eq == null) return "non spécifié";
@@ -77,8 +72,9 @@ export async function loadCatalog(): Promise<CatalogExercise[]> {
 }
 
 /**
- * Search the catalog by name (accent/case-insensitive). Returns at most
- * `limit` matches, ranked: prefix match > word-start match > substring.
+ * Search the catalog (French- or English-typed). Every query token must match
+ * (after FR→EN expansion); results ranked by earliest / word-start matches.
+ * Returns at most `limit` items.
  */
 export async function searchCatalog(
   query: string,
@@ -86,17 +82,13 @@ export async function searchCatalog(
 ): Promise<CatalogExercise[]> {
   await loadCatalog();
   if (!indexed) return [];
-  const q = normalize(query);
-  if (!q) return [];
+  const tokens = tokenizeQuery(query);
+  if (tokens.length === 0) return [];
   const scored: { item: CatalogExercise; score: number }[] = [];
   for (let i = 0; i < indexed.items.length; i++) {
     const name = indexed.normNames[i];
-    const pos = name.indexOf(q);
-    if (pos === -1) continue;
-    let score = pos; // earlier match = better
-    if (pos === 0) score -= 100; // prefix match
-    else if (name[pos - 1] === " ") score -= 50; // word-start match
-    scored.push({ item: indexed.items[i], score });
+    if (!nameMatches(name, tokens)) continue;
+    scored.push({ item: indexed.items[i], score: scoreMatch(name, tokens) });
   }
   scored.sort((a, b) => a.score - b.score || a.item.name.length - b.item.name.length);
   return scored.slice(0, limit).map((s) => s.item);

@@ -6,6 +6,7 @@ import { Plus, Search, Star } from "lucide-react";
 import type { CatalogExercise, Exercise, MuscleGroup } from "@/types";
 import { muscleLabel } from "@/types";
 import { normalize, searchCatalog } from "@/data/catalog";
+import { matchesQuery } from "@/data/search-fr";
 import { useStore } from "@/data/store";
 import { useToast } from "./toast";
 import { Button, Sheet, Tag } from "./ui";
@@ -65,12 +66,12 @@ export function ExercisePicker({
 
   const nq = normalize(query);
 
-  // Adopted exercises matching the query (or all when query empty).
+  // Adopted exercises matching the query (FR- or EN-typed; all when empty).
   const mine = useMemo(() => {
     const list = exercises.filter((e) => !excludeIds?.has(e.id));
     if (!nq) return list;
-    return list.filter((e) => normalize(e.name).includes(nq));
-  }, [exercises, nq, excludeIds]);
+    return list.filter((e) => matchesQuery(e.name, query));
+  }, [exercises, nq, query, excludeIds]);
 
   // Catalog results whose exact name isn't already adopted (avoid dupes).
   const adoptedLibIds = useMemo(
