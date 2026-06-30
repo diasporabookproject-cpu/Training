@@ -14,6 +14,7 @@ import {
 } from "react";
 import type { CatalogExercise, Exercise, MuscleGroup, Workout } from "@/types";
 import * as repo from "./db";
+import type { BackupV1 } from "./db";
 import { isSyncConfigured, supabase } from "./supabase";
 import { fullSync } from "./sync";
 
@@ -33,6 +34,8 @@ type StoreValue = {
   saveWorkout: (w: Workout) => Promise<void>;
   removeWorkout: (id: string) => Promise<void>;
   isExerciseUsed: (id: string) => boolean;
+  mergeImport: (backup: BackupV1) => Promise<void>;
+  replaceImport: (backup: BackupV1) => Promise<void>;
 
   // Cloud sync
   syncEnabled: boolean;
@@ -272,6 +275,22 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     [afterMutation]
   );
 
+  const mergeImport = useCallback(
+    async (backup: BackupV1) => {
+      await repo.mergeBackup(backup);
+      await afterMutation();
+    },
+    [afterMutation]
+  );
+
+  const replaceImport = useCallback(
+    async (backup: BackupV1) => {
+      await repo.importBackup(backup);
+      await afterMutation();
+    },
+    [afterMutation]
+  );
+
   // ── Auth actions ─────────────────────────────────────────────────────────
   const signUp = useCallback(async (email: string, password: string) => {
     const { data, error } = await supabase.auth.signUp({ email, password });
@@ -327,6 +346,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     saveWorkout,
     removeWorkout,
     isExerciseUsed,
+    mergeImport,
+    replaceImport,
     syncEnabled: isSyncConfigured,
     userEmail,
     syncStatus,

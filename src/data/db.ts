@@ -267,6 +267,27 @@ export async function importBackup(backup: BackupV1): Promise<void> {
   );
 }
 
+/** Merge a backup INTO existing data (upsert by id), without clearing. */
+export async function mergeBackup(backup: BackupV1): Promise<void> {
+  const now = Date.now();
+  const exercises = backup.exercises.map((e) => ({
+    ...e,
+    updatedAt: e.updatedAt ?? now,
+    deleted: e.deleted ?? false,
+  }));
+  const workouts = backup.workouts.map((w) => ({
+    ...w,
+    updatedAt: w.updatedAt ?? now,
+    deleted: w.deleted ?? false,
+  }));
+  await guard("fusionner la sauvegarde", () =>
+    db.transaction("rw", db.exercises, db.workouts, async () => {
+      if (exercises.length) await db.exercises.bulkPut(exercises);
+      if (workouts.length) await db.workouts.bulkPut(workouts);
+    })
+  );
+}
+
 export async function resetAll(): Promise<void> {
   await guard("réinitialiser", () =>
     db.transaction("rw", db.exercises, db.workouts, db.settings, async () => {

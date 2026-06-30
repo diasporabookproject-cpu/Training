@@ -22,7 +22,6 @@ import { useStore } from "@/data/store";
 import {
   exportBackup,
   getLastExportAt,
-  importBackup,
   isValidBackup,
   resetAll,
   setLastExportAt,
@@ -37,7 +36,7 @@ import { MuscleSelect } from "@/components/MuscleSelect";
 const EXPORT_REMINDER_DAYS = 7;
 
 export function ReglagesTab() {
-  const { reload } = useStore();
+  const { reload, mergeImport, replaceImport } = useStore();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -82,7 +81,7 @@ export function ReglagesTab() {
     fileRef.current?.click();
   }
 
-  async function confirmImport() {
+  async function doImport(mode: "merge" | "replace") {
     const file = pendingImport;
     setPendingImport(null);
     if (!file) return;
@@ -92,9 +91,13 @@ export function ReglagesTab() {
         toast("Fichier de sauvegarde CHARGE invalide.", "error");
         return;
       }
-      await importBackup(data);
-      await reload();
-      toast("Sauvegarde restaurée ✓", "success");
+      if (mode === "merge") {
+        await mergeImport(data);
+        toast("Séances ajoutées ✓", "success");
+      } else {
+        await replaceImport(data);
+        toast("Sauvegarde restaurée ✓", "success");
+      }
     } catch (e) {
       toast(e instanceof Error ? e.message : "Échec de l'import", "error");
     }
@@ -196,14 +199,11 @@ export function ReglagesTab() {
         }}
       />
 
-      <ConfirmDialog
+      <ImportChoiceDialog
         open={pendingImport !== null}
-        title="Importer cette sauvegarde ?"
-        message="Toutes les données actuelles (séances et exercices) seront remplacées. Cette action est irréversible — exporte un backup avant si besoin."
-        confirmLabel="Remplacer"
-        danger
         onCancel={() => setPendingImport(null)}
-        onConfirm={confirmImport}
+        onMerge={() => doImport("merge")}
+        onReplace={() => doImport("replace")}
       />
 
       <ConfirmDialog
@@ -224,6 +224,52 @@ export function ReglagesTab() {
           }
         }}
       />
+    </div>
+  );
+}
+
+function ImportChoiceDialog({
+  open,
+  onCancel,
+  onMerge,
+  onReplace,
+}: {
+  open: boolean;
+  onCancel: () => void;
+  onMerge: () => void;
+  onReplace: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-6"
+      onClick={onCancel}
+      role="alertdialog"
+      aria-modal="true"
+    >
+      <Card className="w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <h3 className="text-lg font-semibold">Importer ce fichier</h3>
+        <p className="mt-2 text-sm text-muted">
+          Comment veux-tu l'intégrer à tes données actuelles ?
+        </p>
+        <div className="mt-5 space-y-2">
+          <Button variant="primary" className="w-full" onClick={onMerge}>
+            Ajouter à mes données
+          </Button>
+          <p className="px-1 text-[11px] text-muted">
+            Fusionne le contenu du fichier avec tes séances existantes (rien n'est effacé).
+          </p>
+          <Button variant="danger" className="mt-2 w-full" onClick={onReplace}>
+            Tout remplacer
+          </Button>
+          <p className="px-1 text-[11px] text-muted">
+            Efface tout puis restaure uniquement le fichier (pour une vraie restauration).
+          </p>
+          <Button variant="ghost" className="mt-2 w-full" onClick={onCancel}>
+            Annuler
+          </Button>
+        </div>
+      </Card>
     </div>
   );
 }
